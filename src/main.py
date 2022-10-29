@@ -13,18 +13,19 @@ from bs4 import BeautifulSoup
 
 from cli import log
 
-
 class SteamGifts:
-    def __init__(self, cookie, gifts_type, pinned, min_points):
+    def __init__(self, cookie, gifts_type, pinned, entered_giveaways, min_points):
         self.cookie = {
             'PHPSESSID': cookie
         }
         self.gifts_type = gifts_type
         self.pinned = pinned
+        self.entered_giveaways = entered_giveaways
         self.min_points = int(min_points)
 
         self.base = "https://www.steamgifts.com"
         self.session = requests.Session()
+        self.past_games = None 
 
         self.filter_url = {
             'All': "search?page=%d",
@@ -69,18 +70,53 @@ class SteamGifts:
             log("⛔  Cookie is not valid.", "red")
             sleep(10)
             exit()
-
-    def get_game_content(self, page=1):
+    
+    def get_entered_giveaways(self, page=1, last_page=20):
         n = page
-        while True:
+        game_names = []
+        paginated_url = f"{self.base}/giveaways/entered/search?page={n}"
+        soup = self.get_soup_from_page(paginated_url)
+        last_div = str(soup.find_all('div', {'class': 'pagination'})[0].find_all('a')[-1])
+
+        if not last_page:
+            last_page = int(last_div.split('=')[1].split('"')[1])
+
+        if self.entered_giveaways:
+           while n <= last_page:
+
+              txt = "⚙️  Retrieving past giveaways from page %d." % n
+              log(txt, 'magenta')
+              paginated_url = f"{self.base}/giveaways/entered/search?page={n}"
+              soup = self.get_soup_from_page(paginated_url)
+              game_list = soup.find_all('div', {'class': 'table__row-inner-wrap'})
+
+              if not len(game_list):
+                  log("⛔  Page is empty. Please, select another type.", "red")
+                  sleep(10)
+                  exit()
+
+              for item in game_list:
+                  game_name = item.find_all('a',{'class':'table__column__heading'})[0]['href'].split('/')[-1]
+                  game_names.append(game_name) 
+                  continue
+              n+=1
+              
+        self.past_games = set(game_names) 
+
+        return self.past_games
+
+    def get_game_content(self, game_names, page=1):
+        n = page
+        game_str = ' '.join(game_names)
+
+        while n <= 3:
+
             txt = "⚙️  Retrieving games from %d page." % n
             log(txt, "magenta")
-
             filtered_url = self.filter_url[self.gifts_type] % n
             paginated_url = f"{self.base}/giveaways/{filtered_url}"
 
             soup = self.get_soup_from_page(paginated_url)
-
             game_list = soup.find_all('div', {'class': 'giveaway__row-inner-wrap'})
 
             if not len(game_list):
@@ -105,8 +141,10 @@ class SteamGifts:
                     game_cost = game_cost.getText().replace('(', '').replace(')', '').replace('P', '')
                 else:
                     continue
-
-                game_name = item.find('a', {'class': 'giveaway__heading__name'}).text
+                
+                game_name = item.find('a')['href'].split('/')[-1]
+                if game_name not in game_names:
+                    continue
 
                 if self.points - int(game_cost) < 0:
                     txt = f"⛔ Not enough points to enter: {game_name}"
@@ -122,11 +160,11 @@ class SteamGifts:
                         log(txt, "green")
                         sleep(randint(3, 7))
 
-            n = n+1
+            n+=1
 
-
-        log("🛋️  List of games is ended. Waiting 2 mins to update...", "yellow")
-        sleep(120)
+        t_secs = 3600
+        log(f"🛋️  List of games is ended. Waiting {t_secs/60}  mins to update...", "yellow")
+        sleep(t_secs)
         self.start()
 
     def entry_gift(self, game_id):
@@ -144,4 +182,7 @@ class SteamGifts:
             txt = "🤖 Hoho! I am back! You have %d points. Lets hack." % self.points
             log(txt, "blue")
 
-        self.get_game_content()
+        if self.past_games is None:
+            self.get_entered_giveaways()
+
+        self.get_game_content(self.past_games)
